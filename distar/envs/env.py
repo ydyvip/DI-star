@@ -14,6 +14,7 @@ from distar.pysc2.lib import metrics, portspicker
 from distar.pysc2.lib import run_parallel
 from distar.pysc2.lib import stopwatch
 from distar.pysc2.lib import point
+from distar.pysc2.lib.protocol import ProtocolError
 from distar.envs.map_info import get_map_size
 
 from s2clientprotocol import common_pb2 as sc_common
@@ -347,32 +348,40 @@ class SC2Env(object):
             else:
                 transformed_actions.append([])
 
-        random_step = 0
-        if not self._realtime and max_skip_steps < 4:  # simulate inference and network latency in realtime mode
-            random_step = random.choices(list(range(len(self._random_delay_weights))), weights=self._random_delay_weights, k=1)[0]
+        try:
+            random_step = 0
+            if not self._realtime and max_skip_steps < 4:  # simulate inference and network latency in realtime mode
+                random_step = random.choices(list(range(len(self._random_delay_weights))), weights=self._random_delay_weights, k=1)[0]
+                if not self._controllers[0].status_ended:  # May already have ended.
+                    steps = self._parallel.run((c.step, random_step) for c in self._controllers)
+
+            funcs_with_args = []
+            for c, a in zip(self._controllers, transformed_actions):
+                if a:
+                    item = (c.acts, a)
+                    funcs_with_args.append(item)
+            if not self._controllers[0].status_ended:
+                action_result = self._parallel.run(funcs_with_args)
+                for idx in range(len(action_result)):
+                    if action_result[idx] is not None:
+                        result = action_result[idx].result
+                        self._action_result[valid_op_idx[idx]] = result # actions and results could be many
+
+            if not self._realtime:
+                self._episode_steps += random_step
+            step_mul = min(self._next_obs_step) - self._episode_steps
+            step_mul = max(0, step_mul)
+            target_game_loop = self._episode_steps + step_mul
             if not self._controllers[0].status_ended:  # May already have ended.
-                steps = self._parallel.run((c.step, random_step) for c in self._controllers)
-
-        funcs_with_args = []
-        for c, a in zip(self._controllers, transformed_actions):
-            if a:
-                item = (c.acts, a)
-                funcs_with_args.append(item)
-        if not self._controllers[0].status_ended:
-            action_result = self._parallel.run(funcs_with_args)
-            for idx in range(len(action_result)):
-                if action_result[idx] is not None:
-                    result = action_result[idx].result
-                    self._action_result[valid_op_idx[idx]] = result # actions and results could be many
-
-        if not self._realtime:
-            self._episode_steps += random_step
-        step_mul = min(self._next_obs_step) - self._episode_steps
-        step_mul = max(0, step_mul)
-        target_game_loop = self._episode_steps + step_mul
-        if not self._controllers[0].status_ended:  # May already have ended.
-            steps = self._parallel.run((c.step, step_mul) for c in self._controllers)
-        return self._observe(target_game_loop)
+                steps = self._parallel.run((c.step, step_mul) for c in self._controllers)
+            return self._observe(target_game_loop)
+        except ProtocolError as e:
+            logging.warning("SC2 ProtocolError during env.step, treating as episode end: %s", e)
+            self._state = environment.StepType.LAST
+            ret = {}
+            for agent_idx in range(self._num_agents):
+                ret[agent_idx] = {'raw_obs': None, 'opponent_obs': None, 'action_result': []}
+            return ret, [0] * self._num_agents, True
 
     def _observe(self, target_game_loop):
         def parallel_observe(c):

@@ -28,6 +28,31 @@ from collections import defaultdict
 
 sw = stopwatch.sw
 
+# 用于记录超出映射范围的新ID（去重）
+_REPORTED_UNKNOWN_IDS = {
+    'unit_type': set(),
+    'ability': set(),
+    'queue_ability': set(),
+    'buff': set(),
+    'addon': set(),
+    'upgrade': set(),
+}
+
+def _log_unknown_ids(id_kind, raw_ids, mapping_name):
+    """记录超出映射范围的新ID，只打印一次避免刷屏。"""
+    raw_ids = np.asarray(raw_ids)
+    if raw_ids.ndim == 0:
+        raw_ids = raw_ids.reshape(1)
+    for raw_id in raw_ids:
+        raw_id = int(raw_id)
+        if raw_id not in _REPORTED_UNKNOWN_IDS[id_kind]:
+            _REPORTED_UNKNOWN_IDS[id_kind].add(raw_id)
+            logging.warning(
+                "[UNKNOWN_ID] kind=%s, raw_id=%d, mapping=%s, "
+                "please consider adding it to static_data.py",
+                id_kind, raw_id, mapping_name)
+
+
 SPATIAL_SIZE = [152, 160]  # y, x
 BUFF_LENGTH = 3
 UPGRADE_LENGTH = 20
@@ -595,23 +620,45 @@ class Features(object):
             if 'last' in k:
                 pass
             elif k == 'unit_type':
-                entity_info[k] = UNIT_TYPES_REORDER_ARRAY[raw_entity_info[:, 'unit_type']].short()
+                raw_vals = raw_entity_info[:, 'unit_type']
+                out_of_range = raw_vals >= len(UNIT_TYPES_REORDER_ARRAY)
+                if out_of_range.any():
+                    _log_unknown_ids('unit_type', raw_vals[out_of_range], 'UNIT_TYPES_REORDER_ARRAY')
+                entity_info[k] = UNIT_TYPES_REORDER_ARRAY[raw_vals.clip(0, len(UNIT_TYPES_REORDER_ARRAY) - 1)].short().clamp_(min=0)
             elif 'order_id' in k:
                 order_idx = int(k.split('_')[-1])
                 if order_idx == 0:
-                    entity_info[k] = UNIT_ABILITY_REORDER[raw_entity_info[:, k]].short()
-                    invalid_actions = entity_info[k] == -1
+                    raw_vals = raw_entity_info[:, k]
+                    out_of_range = raw_vals >= len(UNIT_ABILITY_REORDER)
+                    if out_of_range.any():
+                        _log_unknown_ids('ability', raw_vals[out_of_range], 'UNIT_ABILITY_REORDER')
+                    entity_info[k] = UNIT_ABILITY_REORDER[raw_vals.clip(0, len(UNIT_ABILITY_REORDER) - 1)].short().clamp_(min=0)
+                    invalid_actions = entity_info[k] == 0  # was -1 before clamp
                     if invalid_actions.any():
-                       print('[ERROR] invalid unit ability', raw_entity_info[invalid_actions, k])
+                         print('[ERROR] invalid unit ability', raw_entity_info[invalid_actions, k])
                 else:
-                    entity_info[k] = ABILITY_TO_QUEUE_ACTION[raw_entity_info[:, k]].short()
-                    invalid_actions = entity_info[k] == -1
+                    raw_vals = raw_entity_info[:, k]
+                    out_of_range = raw_vals >= len(ABILITY_TO_QUEUE_ACTION)
+                    if out_of_range.any():
+                        _log_unknown_ids('queue_ability', raw_vals[out_of_range], 'ABILITY_TO_QUEUE_ACTION')
+                    entity_info[k] = ABILITY_TO_QUEUE_ACTION[raw_vals.clip(0, len(ABILITY_TO_QUEUE_ACTION) - 1)].short().clamp_(min=0)
+                    invalid_actions = entity_info[k] == 0  # was -1 before clamp
                     if invalid_actions.any():
-                       print('[ERROR] invalid queue ability', raw_entity_info[invalid_actions, k])
+                         print('[ERROR] invalid queue ability', raw_entity_info[invalid_actions, k])
             elif 'buff_id' in k:
-                entity_info[k] = BUFFS_REORDER_ARRAY[raw_entity_info[:, k]].short()
+                raw_vals = raw_entity_info[:, k]
+                out_of_range = raw_vals >= len(BUFFS_REORDER_ARRAY)
+                if out_of_range.any():
+                    _log_unknown_ids('buff', raw_vals[out_of_range], 'BUFFS_REORDER_ARRAY')
+                entity_info[k] = BUFFS_REORDER_ARRAY[
+                    np.clip(raw_vals, 0, len(BUFFS_REORDER_ARRAY) - 1)].short().clamp_(min=0)
             elif k == 'addon_unit_type':
-                entity_info[k] = ADDON_REORDER_ARRAY[raw_entity_info[:, k]].short()
+                raw_vals = raw_entity_info[:, k]
+                out_of_range = raw_vals >= len(ADDON_REORDER_ARRAY)
+                if out_of_range.any():
+                    _log_unknown_ids('addon', raw_vals[out_of_range], 'ADDON_REORDER_ARRAY')
+                entity_info[k] = ADDON_REORDER_ARRAY[
+                    np.clip(raw_vals, 0, len(ADDON_REORDER_ARRAY) - 1)].short().clamp_(min=0)
             elif k == 'cargo_space_taken':
                 entity_info[k] = torch.as_tensor(raw_entity_info[:, 'cargo_space_taken'], dtype=dtype).clamp_(min=0, max=8)
             elif k == 'cargo_space_max':
@@ -654,7 +701,12 @@ class Features(object):
                 scalar_info["away_race"] = torch.tensor(race, dtype=torch.uint8)
 
         upgrades = torch.zeros(NUM_UPGRADES, dtype=torch.uint8)
-        raw_upgrades = UPGRADES_REORDER_ARRAY[raw.player.upgrade_ids[:UPGRADE_LENGTH]]
+        raw_upgrade_ids = np.array(raw.player.upgrade_ids[:UPGRADE_LENGTH])
+        out_of_range = raw_upgrade_ids >= len(UPGRADES_REORDER_ARRAY)
+        if out_of_range.any():
+            _log_unknown_ids('upgrade', raw_upgrade_ids[out_of_range], 'UPGRADES_REORDER_ARRAY')
+        raw_upgrades = UPGRADES_REORDER_ARRAY[
+            np.clip(raw_upgrade_ids, 0, len(UPGRADES_REORDER_ARRAY) - 1)].long().clamp_(min=0)
         # for u in raw.player.upgrade_ids:
             #if UPGRADES_REORDER_ARRAY[u] == -1:
             #    print('[ERROR]', u)
@@ -669,10 +721,12 @@ class Features(object):
 
         scalar_info['unit_order_type'] = torch.zeros(NUM_UNIT_MIX_ABILITIES, dtype=uint8)
         own_unit_orders = entity_info['order_id_0'][entity_info['alliance'] == 1]
+        own_unit_orders = own_unit_orders[own_unit_orders >= 0]
         scalar_info['unit_order_type'].scatter_(0, own_unit_orders.long(), torch.ones_like(own_unit_orders, dtype=uint8))
 
         enemy_unit_types = entity_info['unit_type'][entity_info['alliance'] == 4]
         enemy_unit_type_bool = torch.zeros(NUM_UNIT_TYPES, dtype=torch.uint8)
+        enemy_unit_types = enemy_unit_types[enemy_unit_types >= 0]
         scalar_info['enemy_unit_type_bool'] = torch.scatter(enemy_unit_type_bool, dim=0, index=enemy_unit_types.long(), src=torch.ones_like(enemy_unit_types, dtype=torch.uint8))
 
         # game info
@@ -745,7 +799,12 @@ class Features(object):
                 player.warp_gate_count,
                 player.larva_count], dtype=torch.float)
             enemy_agent_statistics = torch.log(enemy_agent_statistics + 1)
-            enemy_raw_upgrades = UPGRADES_REORDER_ARRAY[raw.player.upgrade_ids[:UPGRADE_LENGTH]]
+            enemy_raw_upgrade_ids = np.array(raw.player.upgrade_ids[:UPGRADE_LENGTH])
+            out_of_range = enemy_raw_upgrade_ids >= len(UPGRADES_REORDER_ARRAY)
+            if out_of_range.any():
+                _log_unknown_ids('upgrade', enemy_raw_upgrade_ids[out_of_range], 'UPGRADES_REORDER_ARRAY')
+            enemy_raw_upgrades = UPGRADES_REORDER_ARRAY[
+                np.clip(enemy_raw_upgrade_ids, 0, len(UPGRADES_REORDER_ARRAY) - 1)].long().clamp_(min=0)
             enemy_upgrades = torch.zeros(NUM_UPGRADES, dtype=torch.uint8)
             enemy_upgrades.scatter_(dim=0, index=enemy_raw_upgrades, value=1.)
 
