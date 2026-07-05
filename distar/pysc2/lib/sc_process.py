@@ -195,7 +195,6 @@ class StarcraftProcess(object):
     try:
       with sw("popen"):
         return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=run_config.cwd, env=run_config.env)
-        # return subprocess.Popen(args, cwd=run_config.cwd, env=run_config.env)
     except OSError:
       logging.exception("Failed to launch")
       raise SC2LaunchError("Failed to launch: %s" % args)

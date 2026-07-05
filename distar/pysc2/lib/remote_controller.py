@@ -165,7 +165,8 @@ class RemoteController(object):
             except socket.error:
                 pass  # SC2 hasn't started listening yet.
             except websocket.WebSocketConnectionClosedException:
-                raise ConnectError("Connection rejected. Is something else connected?")
+                logging.warning("SC2 closed connection on attempt %s, retrying...", i)
+                pass
             except websocket.WebSocketBadStatusException as err:
                 if err.status_code == 404:
                     pass  # SC2 is listening, but hasn't set up the /sc2api endpoint yet.
