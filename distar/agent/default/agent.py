@@ -173,7 +173,7 @@ class Agent:
             self._data_buffer = deque(maxlen=self._whole_cfg.actor.traj_len)
             self._push_count = 0
 
-        # init Z
+        # init Z - Z is race-specific beginning order / cumulative stat data from replays
         raw_ob = obs['raw_obs']
         location = []
         for i in raw_ob.observation.raw_data.units:
@@ -191,7 +191,6 @@ class Agent:
             z_data = self._z_data
         z_type = None
         idx = None
-        raw_ob = obs['raw_obs']
         race = RACE_DICT[self._feature.requested_races[raw_ob.observation.player_common.player_id]]
         opponent_id = 1 if raw_ob.observation.player_common.player_id == 2 else 2
         opponent_race = RACE_DICT[self._feature.requested_races[opponent_id]]
@@ -199,22 +198,35 @@ class Agent:
             mix_race = race
         else:
             mix_race = race + opponent_race
-        if self.z_idx is not None:
-            idx, z_type = random.choice(self.z_idx[self._map_name][mix_race][born_location_str])
-            z = z_data[self._map_name][mix_race][born_location_str][idx]
-        else:
-            z = random.choice(z_data[self._map_name][mix_race][born_location_str])
-        if len(z) == 5:
-            self._target_building_order, target_cumulative_stat, bo_location, self._target_z_loop, z_type = z
-        else:
-            self._target_building_order, target_cumulative_stat, bo_location, self._target_z_loop = z
-        self.use_cum_reward = True
-        self.use_bo_reward = True
-        if z_type is not None:
-            if z_type == 2 or z_type == 3:
-                self.use_cum_reward = False
-            if z_type == 1 or z_type == 3:
-                self.use_bo_reward = False
+
+        # terran / protoss z fallback: if race-specific Z data missing, disable Z rewards
+        # instead of crashing with KeyError
+        try:
+            if self.z_idx is not None:
+                idx, z_type = random.choice(self.z_idx[self._map_name][mix_race][born_location_str])
+                z = z_data[self._map_name][mix_race][born_location_str][idx]
+            else:
+                z = random.choice(z_data[self._map_name][mix_race][born_location_str])
+            if len(z) == 5:
+                self._target_building_order, target_cumulative_stat, bo_location, self._target_z_loop, z_type = z
+            else:
+                self._target_building_order, target_cumulative_stat, bo_location, self._target_z_loop = z
+            self.use_cum_reward = True
+            self.use_bo_reward = True
+            if z_type is not None:
+                if z_type == 2 or z_type == 3:
+                    self.use_cum_reward = False
+                if z_type == 1 or z_type == 3:
+                    self.use_bo_reward = False
+        except (KeyError, IndexError):
+            print(f'[Z FALLBACK] No Z data for map={self._map_name}, mix_race={mix_race}. Disabling Z rewards.')
+            self._target_building_order = [0] * BEGINNING_ORDER_LENGTH
+            target_cumulative_stat = []
+            bo_location = [0] * BEGINNING_ORDER_LENGTH
+            self._target_z_loop = 999999
+            self.use_cum_reward = False
+            self.use_bo_reward = False
+
         if random.random() > self._fake_reward_prob:
             self.use_cum_reward = False
         if random.random() > self._fake_reward_prob:

@@ -194,7 +194,18 @@ class StarcraftProcess(object):
     del kwargs
     try:
       with sw("popen"):
-        return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=run_config.cwd, env=run_config.env)
+        startupinfo = None
+        if platform.system() == 'Windows':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+        return subprocess.Popen(
+            args, 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL, 
+            cwd=run_config.cwd, 
+            env=run_config.env,
+            startupinfo=startupinfo)
     except OSError:
       logging.exception("Failed to launch")
       raise SC2LaunchError("Failed to launch: %s" % args)

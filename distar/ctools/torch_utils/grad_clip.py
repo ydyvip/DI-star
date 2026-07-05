@@ -2,7 +2,7 @@ import torch
 from collections import defaultdict
 import math
 from torch.nn.utils import clip_grad_norm_
-from torch._six import inf
+inf = float('inf')
 
 
 def build_grad_clip(cfg):
