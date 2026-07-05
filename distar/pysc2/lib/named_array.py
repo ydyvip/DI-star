@@ -130,6 +130,8 @@ class NamedNumpyArray(np.ndarray):
     self._index_names = getattr(obj, "_index_names", None)
 
   def __getattr__(self, name):
+    if name == '__cuda_array_interface__':
+      raise AttributeError(name)
     try:
       return self[name]
     except KeyError:
