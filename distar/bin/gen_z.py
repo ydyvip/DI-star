@@ -380,7 +380,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_workers", type=int, default=1)
     args = parser.parse_args()
 
-    run_config = run_configs.get('4.10.0')
+    run_config = run_configs.get('5.0.9')  # Updated to support SC2 5.0.x
     num_procs = args.num_workers
     replay_path = args.data
     output_file = os.path.join(os.path.dirname(__file__), '../agent/default/lib','{}.json'.format(args.name))
